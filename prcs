@@ -1,0 +1,349 @@
+#!/usr/bin/perl
+#
+######################################################################
+# Emmanuel BOCQUET 
+# v1.1 : 2015-03-27
+# v1.0 : 2014-01-21
+######################################################################
+# Libs
+use File::Basename;
+use lib dirname(__FILE__)."/libperl";
+use Rcs;
+use PrintColors;
+use Date::Calc qw( Add_Delta_Days Today);
+use Data::Dumper;
+use Cwd qw(realpath);
+use File::Basename;
+use Getopt::Long;
+use strict;
+
+######################################################################
+# Init
+
+my $rcsdir=(getpwuid($<))[7]."/.RCS";
+my $rcsbinary='/usr/bin';
+my %opts;
+
+GetOptions(\%opts, 'help|?','commit|c=s','version|v=s','display|d=s','status|s=s','diff|f=s','show|o=s','remove|r=s','keep|k=s','delete|d=s','info|i=s');
+
+if (! -x "$rcsbinary/ci" || ! -x "$rcsbinary/co" ){
+        $rcsbinary='/usr/bin';
+}
+
+if (! -x "$rcsbinary/ci" || ! -x "$rcsbinary/co" ){
+        $rcsbinary='/bin';
+}
+
+exit 1 if (! -x "$rcsbinary/ci" || ! -x "$rcsbinary/co");
+
+Rcs->bindir($rcsbinary);
+Rcs->quiet(1);
+
+######################################################################
+# Functions
+
+sub sort_record {
+    my ($local,$a,$b)=@_;
+    return ($local->{$a} <=> $local->{$b});
+}
+
+sub commit_file {
+    my $myfile=shift;
+    my $filefull=realpath($myfile);
+    my ($file,$folder)=fileparse($filefull);
+    my $destrcs=$rcsdir."/".$folder;
+    my $date=`date`;
+    my $mode=(stat($filefull))[2];
+    my $atime=(stat($filefull))[8];
+    my $mtime=(stat($filefull))[9];
+    my $rcs = Rcs->new;
+    my $comment="-";
+
+    $destrcs =~ s/\/\//\//g;
+   
+    chomp($date);    
+    if (! -f $destrcs){
+        print `mkdir -p $destrcs >/dev/null`;
+    }
+    if (defined $opts{"info"}){
+        $comment=$opts{"info"};
+    }
+    
+    $rcs->rcsdir($destrcs);
+    $rcs->workdir($folder);
+    $rcs->file($file);
+    
+    $rcs->ci('-u', '-mRevision: '.$comment,'-t-"-"')
+        or die ("Error during Check in [".$myfile."]: $?\n");
+    $rcs->co('-l')
+        or die ("Error during Check out [".$myfile."]: $?\n");
+    
+    chmod($mode,$filefull);
+    utime($atime, $mtime, $filefull);
+    my %dates=$rcs->dates;
+    my @vers = reverse sort {sort_record(\%dates,$a,$b)} keys %dates;
+    printfb("-> <b>%s [v%s]</>\n",$filefull,$vers[0]);    
+}
+
+sub commit_folder {
+    my $folder=shift;
+    
+    opendir(my $dh, $folder) || die "can't opendir $folder: $!";
+    foreach(readdir($dh)){
+        next if (/^\./);
+        next if (-l $folder."/".$_);
+        next if (! -f $folder."/".$_);
+        next if (-B $folder."/".$_);
+        commit_file($folder."/".$_);
+    }
+    closedir $dh;    
+}
+
+sub status_folder {
+        my $folder=shift;
+         opendir(my $dh, $folder) || die "can't opendir $folder: $!";
+    foreach(readdir($dh)){
+        next if (/^\./);
+        next if (-l $folder."/".$_);
+        next if (! -f $folder."/".$_);
+        next if (-B $folder."/".$_);
+        status($folder."/".$_);
+    }
+    closedir $dh;
+}
+
+sub status {
+    my $myfile=shift;
+    my $filefull=realpath($myfile);
+    my ($file,$folder)=fileparse($filefull);    
+    my $destrcs=$rcsdir."/".$folder;
+    my $rcs = Rcs->new;
+    $destrcs =~ s/\/\//\//g;
+    
+    $rcs->rcsdir($destrcs);
+    $rcs->workdir($folder);
+    $rcs->file($file);
+
+
+    my @revisions;
+        eval {
+        @revisions = $rcs->revisions;
+    };
+        if (scalar @revisions){
+    printfb("\n<b>List of all revisions of $filefull</>\n");
+    
+    my %dates=$rcs->dates;
+    my @vers = sort {sort_record(\%dates,$a,$b)} keys %dates;
+
+        my %comments=$rcs->comments;
+    foreach(@vers){
+                chomp($comments{$_});
+                $comments{$_} =~ s/Revision: //;
+        printfb("-> v <b>%-5s</> : %15s : %s\n",$_,scalar localtime($rcs->{'DATE'}{$_}),$comments{$_});
+    }    
+        }
+        else {
+        printfb("\nNo revision found for <b>$filefull</>\n");
+        }
+}
+
+sub diff {
+    my ($myfile,$ver1,$ver2)=@_;
+    my $filefull=realpath($myfile);
+    my ($file,$folder)=fileparse($filefull);    
+    my $destrcs=$rcsdir."/".$folder;
+    my $rcs = Rcs->new;
+    $destrcs =~ s/\/\//\//g;
+    
+    $rcs->rcsdir($destrcs);
+    $rcs->workdir($folder);
+    $rcs->file($file);
+    
+    print $rcs->rcsdiff('-r'.$ver1, '-r'.$ver2);    
+}
+
+sub show {
+    my ($myfile,$ver1)=@_;
+    my $filefull=realpath($myfile);
+    my ($file,$folder)=fileparse($filefull);    
+    my $destrcs=$rcsdir."/".$folder;
+    my $rcs = Rcs->new;
+    $destrcs =~ s/\/\//\//g;
+    
+    $rcs->rcsdir($destrcs);
+    $rcs->workdir($folder);
+    $rcs->file($file);
+    
+    $rcs->co("-p$ver1");
+}
+
+sub keep {
+    my ($myfile,$keep)=@_;
+    my $filefull=realpath($myfile);
+    my ($file,$folder)=fileparse($filefull);    
+    my $destrcs=$rcsdir."/".$folder;
+    my $rcs = Rcs->new;
+    $destrcs =~ s/\/\//\//g;
+    
+    $rcs->rcsdir($destrcs);
+    $rcs->workdir($folder);
+    $rcs->file($file);
+    
+    my %dates=$rcs->dates;
+    my @vers = reverse sort {sort_record(\%dates,$a,$b)} keys %dates;
+    my $n=@vers;
+    if ($keep<$n){
+        remove($myfile,$vers[$keep],$vers[$n-1]);
+    }        
+}
+
+sub remove {
+    my ($myfile,$ver1,$ver2)=@_;
+    my $filefull=realpath($myfile);
+    my ($file,$folder)=fileparse($filefull);    
+    my $destrcs=$rcsdir."/".$folder;
+    my $rcs = Rcs->new;
+    $destrcs =~ s/\/\//\//g;
+    
+    $rcs->rcsdir($destrcs);
+    $rcs->workdir($folder);
+    $rcs->file($file);
+    $rcs->rcs('-o'.$ver1.':'.$ver2);
+}
+
+sub fdelete {
+    my ($myfile,$ver1,$ver2)=@_;
+    my $filefull=realpath($myfile);
+    my ($file,$folder)=fileparse($filefull);    
+    my $destrcs=$rcsdir."/".$folder;
+    my $rcs = Rcs->new;
+    $destrcs =~ s/\/\//\//g;
+    
+    $rcs->rcsdir($destrcs);
+    $rcs->workdir($folder);
+    $rcs->file($file);
+    
+    my $filepath=$rcs->rcsdir()."/".$rcs->arcfile();
+    if (-f $filepath){
+        unlink($filepath);
+    }
+}
+
+sub help {
+    print << 'END';
+Purpose
+        RCS encapsuled functions
+
+Syntax
+        prcs [ --help ][ --commit {file|folder} ] [ --status {file|folder} ] [ --diff {file},{ver1},{ver2} ] [ --info {infos} ]
+             [ --show {file},{ver} ] [ --remove {file},{ver1},{ver2} ] [ --keep {file},{num} ] [ --delete {file} ]
+
+        prcs [ -? ][ -c {file | folder} ] [ -s {file} ] [ -f {file},{ver1},{ver2} ] [ -i {info} ]
+             [ -o {file},{ver} ] [ -r {file},{ver1},{ver2} ] [ -k {file},{num} ] [ -d {file} ]
+
+Description
+
+        Commit a file :
+                prcs -c {file | folder} -i {info}
+                prcs --commit {file | folder} --info {info}
+ 
+        Show all revisions and dates for a file :
+                prcs --status {file|folder}
+                prcs -s {file|folder}
+
+        Show diff between two revision versions :
+                prcs --diff {file},{ver1},{ver2}
+                prcs -f {file},{ver1},{ver2}
+
+        Print a specific revision to stdout :
+                prcs --show {file},{ver}
+                prcs -o {file},{ver}
+
+        Remove all revisions between ver1 and ver2 :
+                prcs --remove {file},{ver1},{ver2}
+                prcs -r {file},{ver1},{ver2}
+
+        Keep only the last X revisions :
+                prcs --keep {file},{X}
+                prcs -k {file},{X}
+
+        Delete working file :
+                prcs --delete {file}
+                prcs -d {file}
+        
+END
+
+}
+
+
+######################################################################
+# Main
+
+if (defined $opts{'help'} || scalar(keys %opts) < 1){
+    help();
+    exit 0;
+}
+
+if (defined $opts{'commit'}){
+    if ( -d $opts{'commit'} ){
+        commit_folder( $opts{'commit'} );        
+    }
+    elsif ( -T $opts{'commit'} ) {
+        print STDERR "commit file ",$opts{'commit'},"\n";
+        commit_file( $opts{'commit'} );
+    }
+    else {
+        die ("File not found [".$opts{'commit'}."]\n");
+    }    
+    exit 0;
+}
+
+if (defined $opts{'status'}){
+        if ( -d $opts{'status'} ){
+                status_folder( $opts{'status'} );
+        }
+       elsif ( -T $opts{'status'} ){
+            status($opts{'status'});
+       }
+        else {
+        die ("File not found [".$opts{'status'}."]\n");
+        }
+       exit 0;
+}
+
+if (defined $opts{'diff'}){
+    my @ver=split(/,/,$opts{'diff'});    
+    if (-T $ver[0] && defined $ver[2]) {
+        diff(@ver);
+    }
+    exit 0;
+}
+
+if (defined $opts{'show'}){
+    my @ver=split(/,/,$opts{'show'});    
+    if (-T $ver[0] && defined $ver[1]) {
+        show(@ver);
+    }
+    exit 0;
+}
+
+if (defined $opts{'remove'}){
+    my @ver=split(/,/,$opts{'remove'});    
+    if (-T $ver[0] && defined $ver[2]) {
+        remove(@ver);
+    }
+    exit 0;
+}
+
+if (defined $opts{'keep'}){
+    my @ver=split(/,/,$opts{'keep'});    
+    if (-T $ver[0] && defined $ver[1]) {
+        keep(@ver);
+    }
+    exit 0;
+}
+
+if (defined $opts{'delete'}){
+    fdelete($opts{'delete'});
+    exit 0;
+}
