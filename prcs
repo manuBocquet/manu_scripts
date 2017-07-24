@@ -56,6 +56,8 @@ sub commit_file {
     my $mode=(stat($filefull))[2];
     my $atime=(stat($filefull))[8];
     my $mtime=(stat($filefull))[9];
+    my $uid=(stat($filefull))[4];
+    my $gid=(stat($filefull))[5];
     my $rcs = Rcs->new;
     my $comment="-";
 
@@ -79,6 +81,9 @@ sub commit_file {
         or die ("Error during Check out [".$myfile."]: $?\n");
     
     chmod($mode,$filefull);
+    if ( $< == 0 ) {
+        chown $uid, $gid, $filefull;
+    }
     utime($atime, $mtime, $filefull);
     my %dates=$rcs->dates;
     my @vers = reverse sort {sort_record(\%dates,$a,$b)} keys %dates;
