@@ -96,6 +96,7 @@ sub commit_folder {
     opendir(my $dh, $folder) || die "can't opendir $folder: $!";
     foreach(readdir($dh)){
         next if (/^\./);
+        next if (/,v$/);
         next if (-l $folder."/".$_);
         next if (! -f $folder."/".$_);
         next if (-B $folder."/".$_);
@@ -109,6 +110,7 @@ sub status_folder {
          opendir(my $dh, $folder) || die "can't opendir $folder: $!";
     foreach(readdir($dh)){
         next if (/^\./);
+        next if (/,v$/);
         next if (-l $folder."/".$_);
         next if (! -f $folder."/".$_);
         next if (-B $folder."/".$_);
